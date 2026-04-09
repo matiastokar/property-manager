@@ -71,9 +71,11 @@ class Contract(Base):
     tenant_name = Column(String, nullable=False)
     tenant_email = Column(String, nullable=True)
     tenant_phone = Column(String, nullable=True)
+    tenant_id_number = Column(String, nullable=True)  # DNI/NIE/Passport
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=False)
     monthly_rent = Column(Float, nullable=False)
+    deposit = Column(Float, nullable=True)  # security deposit amount
     currency = Column(Enum(Currency), nullable=False, default=Currency.EUR)
     status = Column(Enum(ContractStatus), nullable=False, default=ContractStatus.ACTIVE)
     finish_date = Column(Date, nullable=True)  # actual end date if finished early
@@ -118,6 +120,23 @@ class Incident(Base):
 
     property = relationship("Property", back_populates="incidents")
     expenses = relationship("Expense", back_populates="incident")
+
+
+class RecurringExpense(Base):
+    """Template for expenses that are automatically created each month."""
+    __tablename__ = "recurring_expenses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    property_id = Column(Integer, ForeignKey("properties.id"), nullable=False)
+    expense_type = Column(Enum(ExpenseType), nullable=False)
+    category = Column(String, nullable=False)
+    amount = Column(Float, nullable=False)
+    currency = Column(Enum(Currency), nullable=False, default=Currency.EUR)
+    description = Column(String, nullable=False)
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    property = relationship("Property")
 
 
 class RentPayment(Base):

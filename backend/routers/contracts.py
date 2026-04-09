@@ -15,9 +15,11 @@ class ContractCreate(BaseModel):
     tenant_name: str
     tenant_email: Optional[str] = None
     tenant_phone: Optional[str] = None
+    tenant_id_number: Optional[str] = None
     start_date: date
     end_date: date
     monthly_rent: float
+    deposit: Optional[float] = None
     currency: models.Currency = models.Currency.EUR
     notes: Optional[str] = None
 
@@ -26,9 +28,11 @@ class ContractUpdate(BaseModel):
     tenant_name: Optional[str] = None
     tenant_email: Optional[str] = None
     tenant_phone: Optional[str] = None
+    tenant_id_number: Optional[str] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     monthly_rent: Optional[float] = None
+    deposit: Optional[float] = None
     currency: Optional[models.Currency] = None
     notes: Optional[str] = None
 
@@ -46,9 +50,11 @@ def contract_to_dict(c: models.Contract) -> dict:
         "tenant_name": c.tenant_name,
         "tenant_email": c.tenant_email,
         "tenant_phone": c.tenant_phone,
+        "tenant_id_number": c.tenant_id_number,
         "start_date": c.start_date.isoformat() if c.start_date else None,
         "end_date": c.end_date.isoformat() if c.end_date else None,
         "monthly_rent": c.monthly_rent,
+        "deposit": c.deposit,
         "currency": c.currency.value if c.currency else None,
         "status": c.status.value if c.status else None,
         "finish_date": c.finish_date.isoformat() if c.finish_date else None,

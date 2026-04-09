@@ -8,7 +8,7 @@ load_dotenv()
 
 from database import engine
 import models
-from routers import properties, contracts, expenses, incidents, rents, dashboard
+from routers import properties, contracts, expenses, incidents, rents, dashboard, recurring
 from scheduler import create_scheduler
 
 logging.basicConfig(level=logging.INFO)
@@ -49,6 +49,7 @@ app.include_router(expenses.router)
 app.include_router(incidents.router)
 app.include_router(rents.router)
 app.include_router(dashboard.router)
+app.include_router(recurring.router)
 
 
 @app.get("/")
