@@ -78,6 +78,7 @@ export interface RentPayment {
   tenant_name?: string
   property_name?: string
   property_id?: number
+  country?: string
   amount: number
   currency: Currency
   payment_date: string
@@ -120,7 +121,7 @@ export const contractsApi = {
 }
 
 export const expensesApi = {
-  list: (params?: { property_id?: number; expense_type?: string }) => api.get<Expense[]>('/expenses/', { params }).then(r => r.data),
+  list: (params?: { property_id?: number; expense_type?: string; period_month?: number; period_year?: number }) => api.get<Expense[]>('/expenses/', { params }).then(r => r.data),
   create: (data: Omit<Expense, 'id' | 'created_at' | 'property_name'>) => api.post('/expenses/', data).then(r => r.data),
   update: (id: number, data: Partial<Expense>) => api.put(`/expenses/${id}`, data).then(r => r.data),
   delete: (id: number) => api.delete(`/expenses/${id}`).then(r => r.data),

@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo } from 'react'
-import { Plus, Pencil, Trash2, Receipt, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
+import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
 import { expensesApi, incidentsApi, propertiesApi, type Expense, type Incident, type Property } from '../api/client'
 import Modal from '../components/Modal'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 const FIXED_CATEGORIES = ['mortgage', 'hoa', 'insurance', 'cleaning', 'other']
 const VARIABLE_CATEGORIES = ['incident', 'repair', 'improvement', 'other']
@@ -115,7 +116,11 @@ function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; s
   return sortDir === 'asc' ? <ChevronUp className="inline w-3 h-3 ml-1 text-blue-500" /> : <ChevronDown className="inline w-3 h-3 ml-1 text-blue-500" />
 }
 
+const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+
 export default function Expenses() {
+  const now = new Date()
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [properties, setProperties] = useState<Property[]>([])
   const [incidents, setIncidents] = useState<Incident[]>([])
@@ -123,8 +128,12 @@ export default function Expenses() {
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Expense | null>(null)
   const [filterType, setFilterType] = useState('')
+  const [filterMonth, setFilterMonth] = useState(now.getMonth() + 1)
+  const [filterYear, setFilterYear] = useState(now.getFullYear())
   const [sortKey, setSortKey] = useState<SortKey>('expense_date')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
+
+  const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 2 + i)
 
   function handleSort(key: SortKey) {
     if (key === sortKey) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
@@ -142,12 +151,16 @@ export default function Expenses() {
   }), [expenses, sortKey, sortDir])
 
   const load = () => Promise.all([
-    expensesApi.list(filterType ? { expense_type: filterType } : {}),
+    expensesApi.list({
+      ...(filterType ? { expense_type: filterType } : {}),
+      period_month: filterMonth,
+      period_year: filterYear,
+    }),
     propertiesApi.list(), incidentsApi.list()
   ]).then(([e, p, i]) => { setExpenses(e); setProperties(p); setIncidents(i) })
     .finally(() => setLoading(false))
 
-  useEffect(() => { load() }, [filterType])
+  useEffect(() => { load() }, [filterType, filterMonth, filterYear])
 
   const handleCreate = async (data: any) => { await expensesApi.create(data); setShowForm(false); load() }
   const handleUpdate = async (data: any) => { if (!editing) return; await expensesApi.update(editing.id, data); setEditing(null); load() }
@@ -157,16 +170,36 @@ export default function Expenses() {
     acc[e.currency] = (acc[e.currency] ?? 0) + e.amount; return acc
   }, {})
 
+  const propertyChartData = useMemo(() => {
+    const byProperty: Record<string, { currency: string; amount: number }> = {}
+    for (const e of expenses) {
+      const name = e.property_name || 'Sin nombre'
+      if (!byProperty[name]) byProperty[name] = { currency: e.currency, amount: 0 }
+      byProperty[name].amount += e.amount
+    }
+    return Object.entries(byProperty)
+      .map(([name, { currency, amount }]) => ({
+        name: name.length > 18 ? name.slice(0, 18) + '…' : name,
+        amount: Math.round(amount),
+        currency,
+      }))
+      .sort((a, b) => b.amount - a.amount)
+  }, [expenses])
+
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Gastos</h1>
-          <p className="text-gray-500 text-sm mt-1">
-            {Object.entries(total).map(([c, v]) => `${v.toLocaleString('es-ES', { maximumFractionDigits: 0 })} ${c}`).join(' | ') || '0'}
-          </p>
+          <p className="text-gray-500 text-sm mt-1">{MONTH_NAMES[filterMonth - 1]} {filterYear} — {expenses.length} gasto{expenses.length !== 1 ? 's' : ''}</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-3 flex-wrap justify-end">
+          <select className="input w-auto" value={filterMonth} onChange={e => setFilterMonth(Number(e.target.value))}>
+            {MONTH_NAMES.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+          </select>
+          <select className="input w-auto" value={filterYear} onChange={e => setFilterYear(Number(e.target.value))}>
+            {years.map(y => <option key={y}>{y}</option>)}
+          </select>
           <select className="input w-auto" value={filterType} onChange={e => setFilterType(e.target.value)}>
             <option value="">Todos los tipos</option>
             <option value="fixed">Fijos</option>
@@ -177,6 +210,49 @@ export default function Expenses() {
           </button>
         </div>
       </div>
+
+      {/* Totals by currency */}
+      {!loading && Object.keys(total).length > 0 && (
+        <div className="flex gap-4 flex-wrap">
+          {Object.entries(total).map(([currency, val]) => (
+            <div key={currency} className="card flex items-center gap-3 py-3 px-5 min-w-[160px]">
+              <div className="flex flex-col">
+                <span className="text-xs text-gray-400 uppercase tracking-wide">{currency}</span>
+                <span className="text-xl font-bold text-red-600">
+                  {val.toLocaleString('es-ES', { maximumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+          ))}
+          <div className="card flex items-center gap-3 py-3 px-5 min-w-[160px] bg-gray-50">
+            <div className="flex flex-col">
+              <span className="text-xs text-gray-400 uppercase tracking-wide">Total gastos</span>
+              <span className="text-xl font-bold text-gray-700">{expenses.length}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Property expenses chart */}
+      {!loading && propertyChartData.length > 0 && (
+        <div className="card">
+          <h2 className="text-base font-semibold text-gray-900 mb-1">Egresos por Propiedad</h2>
+          <p className="text-xs text-gray-400 mb-4">{MONTH_NAMES[filterMonth - 1]} {filterYear}{filterType ? ` · ${filterType === 'fixed' ? 'Fijos' : 'Variables'}` : ''}</p>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={propertyChartData} margin={{ top: 5, right: 20, left: 10, bottom: 60 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-35} textAnchor="end" interval={0} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)} />
+              <Tooltip formatter={(value: number, _name: string, props: any) => [
+                `${value.toLocaleString('es-ES')} ${props.payload.currency}`, 'Gasto'
+              ]} />
+              <Bar dataKey="amount" fill="#f97316" radius={[4, 4, 0, 0]}
+                label={{ position: 'top', fontSize: 10, formatter: (v: number) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v }}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {loading ? <div className="text-center py-12 text-gray-400">Cargando...</div> : (
         <div className="card overflow-hidden p-0">

@@ -34,6 +34,7 @@ class ContractUpdate(BaseModel):
     monthly_rent: Optional[float] = None
     deposit: Optional[float] = None
     currency: Optional[models.Currency] = None
+    status: Optional[models.ContractStatus] = None
     notes: Optional[str] = None
 
 

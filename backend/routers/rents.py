@@ -40,6 +40,7 @@ def payment_to_dict(p: models.RentPayment) -> dict:
         "tenant_name": p.contract.tenant_name if p.contract else None,
         "property_name": p.contract.property.name if p.contract and p.contract.property else None,
         "property_id": p.contract.property_id if p.contract else None,
+        "country": p.contract.property.country if p.contract and p.contract.property else None,
         "amount": p.amount,
         "currency": p.currency.value if p.currency else None,
         "payment_date": p.payment_date.isoformat() if p.payment_date else None,

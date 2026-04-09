@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { Building2, FileText, AlertTriangle, TrendingUp, TrendingDown, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
 import { dashboardApi, type Currency } from '../api/client'
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, ReferenceLine
 } from 'recharts'
 
 const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
@@ -110,10 +110,6 @@ export default function Dashboard() {
     })
   }, [overview, sortKey, sortDir])
 
-  if (loading) return <div className="flex items-center justify-center h-full text-gray-400">Cargando...</div>
-
-  const monthLabel = summary ? MONTH_NAMES[(summary.current_month ?? 1) - 1] : ''
-
   // Prepare country chart data
   const countryChartData = useMemo(() => {
     if (!overview?.properties) return []
@@ -145,18 +141,31 @@ export default function Dashboard() {
     'Gasto EUR':   '#f97316', 'Gasto USD':   '#ef4444', 'Gasto ARS':   '#f59e0b',
   }
 
-  // Prepare chart data from overview
-  const chartData = overview?.properties?.map((p: any) => ({
-    name: p.property_name.length > 12 ? p.property_name.slice(0, 12) + '…' : p.property_name,
-    ...Object.entries(p.annual_income ?? {}).reduce((acc: any, [cur, val]) => {
-      acc[`Ingreso ${cur}`] = val
-      return acc
-    }, {}),
-    ...Object.entries(p.annual_expenses ?? {}).reduce((acc: any, [cur, val]) => {
-      acc[`Gasto ${cur}`] = val
-      return acc
-    }, {}),
-  })) ?? []
+  // Rentabilidad YTD por propiedad
+  const rentabilidadData = useMemo(() => {
+    if (!overview?.properties) return []
+    return overview.properties
+      .map((p: any) => {
+        const benefit = calcBenefit(p.annual_income ?? {}, p.annual_expenses ?? {})
+        // Build label with all currencies that have a value
+        const label = Object.entries(benefit)
+          .filter(([, v]) => v !== 0)
+          .map(([cur, v]) => `${(v as number) >= 0 ? '+' : ''}${Math.round(v as number).toLocaleString('es-ES')} ${cur}`)
+          .join(' / ')
+        return {
+          name: p.property_name.length > 16 ? p.property_name.slice(0, 16) + '…' : p.property_name,
+          fullName: p.property_name,
+          benefit: Math.round(getPrimaryCurrencyValue(benefit)),
+          label,
+          currencies: benefit,
+        }
+      })
+      .sort((a: any, b: any) => b.benefit - a.benefit)
+  }, [overview])
+
+  if (loading) return <div className="flex items-center justify-center h-full text-gray-400">Cargando...</div>
+
+  const monthLabel = summary ? MONTH_NAMES[(summary.current_month ?? 1) - 1] : ''
 
   return (
     <div className="p-8 space-y-6">
@@ -175,6 +184,22 @@ export default function Dashboard() {
           <p className="text-lg font-bold text-green-600">{formatAmounts(summary?.monthly_income ?? {})}</p>
           <p className="text-sm text-gray-500 mt-2 mb-1">Gastos {monthLabel}</p>
           <p className="text-lg font-bold text-red-500">{formatAmounts(summary?.monthly_expenses ?? {})}</p>
+          <div className="border-t border-gray-100 mt-3 pt-3">
+            <p className="text-sm text-gray-500 mb-1">Beneficio {monthLabel}</p>
+            {(() => {
+              const income = summary?.monthly_income ?? {}
+              const expenses = summary?.monthly_expenses ?? {}
+              const currencies = Array.from(new Set([...Object.keys(income), ...Object.keys(expenses)]))
+              return currencies.map(cur => {
+                const val = (income[cur] ?? 0) - (expenses[cur] ?? 0)
+                return (
+                  <p key={cur} className={`text-lg font-bold ${val >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {val >= 0 ? '+' : ''}{val.toLocaleString('es-ES', { maximumFractionDigits: 0 })} {cur}
+                  </p>
+                )
+              })
+            })()}
+          </div>
         </div>
       </div>
 
@@ -254,21 +279,39 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Bar chart */}
-      {chartData.length > 0 && (
+      {/* Rentabilidad YTD */}
+      {rentabilidadData.length > 0 && (
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Ingresos vs Gastos por Propiedad</h2>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={chartData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
+          <h2 className="text-lg font-semibold text-gray-900 mb-1">Rentabilidad YTD por Propiedad</h2>
+          <p className="text-xs text-gray-400 mb-4">Beneficio acumulado {overview?.year} · ordenado mayor a menor · eje en valor equivalente USD</p>
+          <ResponsiveContainer width="100%" height={320}>
+            <BarChart data={rentabilidadData} margin={{ top: 20, right: 20, left: 10, bottom: 70 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-              <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip />
-              <Legend />
-              {Array.from(new Set(chartData.flatMap(d => Object.keys(d).filter(k => k !== 'name'))))
-                .map((key) => (
-                  <Bar key={key} dataKey={key} fill={key.startsWith('Ingreso') ? (key.includes('EUR') ? '#6366f1' : '#3b82f6') : (key.includes('EUR') ? '#f97316' : '#ef4444')} />
+              <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-40} textAnchor="end" interval={0} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => v >= 1000 || v <= -1000 ? `${(v / 1000).toFixed(0)}k` : String(v)} />
+              <ReferenceLine y={0} stroke="#94a3b8" strokeWidth={1.5} />
+              <Tooltip
+                content={({ active, payload }: any) => {
+                  if (!active || !payload?.length) return null
+                  const d = payload[0].payload
+                  return (
+                    <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-sm">
+                      <p className="font-semibold text-gray-800 mb-1">{d.fullName}</p>
+                      {Object.entries(d.currencies as Record<string, number>).map(([cur, val]) => (
+                        <p key={cur} className={val >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+                          {val >= 0 ? '+' : ''}{Math.round(val).toLocaleString('es-ES')} {cur}
+                        </p>
+                      ))}
+                    </div>
+                  )
+                }}
+              />
+              <Bar dataKey="benefit" radius={[4, 4, 0, 0]}
+                label={{ position: 'top', fontSize: 9, formatter: (_v: number, _n: string, props: any) => props?.payload?.label ?? '' }}>
+                {rentabilidadData.map((entry: any, index: number) => (
+                  <Cell key={index} fill={entry.benefit >= 0 ? '#10b981' : '#ef4444'} />
                 ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>

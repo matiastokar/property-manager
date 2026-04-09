@@ -50,6 +50,8 @@ def expense_to_dict(e: models.Expense) -> dict:
 def list_expenses(
     property_id: Optional[int] = None,
     expense_type: Optional[str] = None,
+    period_month: Optional[int] = None,
+    period_year: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
     q = db.query(models.Expense)
@@ -57,7 +59,14 @@ def list_expenses(
         q = q.filter(models.Expense.property_id == property_id)
     if expense_type:
         q = q.filter(models.Expense.expense_type == expense_type)
-    return [expense_to_dict(e) for e in q.all()]
+    if period_year and period_month:
+        start = date(period_year, period_month, 1)
+        end = date(period_year, period_month + 1, 1) if period_month < 12 else date(period_year + 1, 1, 1)
+        q = q.filter(models.Expense.expense_date >= start, models.Expense.expense_date < end)
+    elif period_year:
+        q = q.filter(models.Expense.expense_date >= date(period_year, 1, 1),
+                     models.Expense.expense_date < date(period_year + 1, 1, 1))
+    return [expense_to_dict(e) for e in q.order_by(models.Expense.expense_date.desc()).all()]
 
 
 @router.get("/{expense_id}")

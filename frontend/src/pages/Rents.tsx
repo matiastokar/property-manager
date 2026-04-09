@@ -2,6 +2,8 @@ import { useEffect, useState, useMemo } from 'react'
 import { Plus, Pencil, Trash2, CheckCircle, XCircle, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
 import { rentsApi, contractsApi, type RentPayment, type Contract } from '../api/client'
 import Modal from '../components/Modal'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+
 
 type SortKey = 'property_name' | 'tenant_name' | 'payment_date' | 'amount'
 type SortDir = 'asc' | 'desc'
@@ -169,6 +171,33 @@ export default function Rents() {
 
   const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 2 + i)
 
+  const totalsByCurrency = useMemo(() =>
+    payments.reduce<Record<string, number>>((acc, p) => {
+      acc[p.currency] = (acc[p.currency] ?? 0) + p.amount
+      return acc
+    }, {})
+  , [payments])
+
+  const propertyChartData = useMemo(() => {
+    const byProperty: Record<string, { currency: string; amount: number }> = {}
+    for (const p of payments) {
+      const name = p.property_name || 'Sin nombre'
+      if (!byProperty[name]) byProperty[name] = { currency: p.currency, amount: 0 }
+      byProperty[name].amount += p.amount
+    }
+    return Object.entries(byProperty)
+      .map(([name, { currency, amount }]) => ({
+        name: name.length > 18 ? name.slice(0, 18) + '…' : name,
+        amount: Math.round(amount),
+        currency,
+      }))
+      .sort((a, b) => b.amount - a.amount)
+  }, [payments])
+
+  const propertyBarCurrencies = useMemo(() =>
+    Array.from(new Set(payments.map(p => p.currency)))
+  , [payments])
+
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
@@ -188,6 +217,50 @@ export default function Rents() {
           </button>
         </div>
       </div>
+
+      {/* Totals by currency */}
+      {!loading && Object.keys(totalsByCurrency).length > 0 && (
+        <div className="flex gap-4 flex-wrap">
+          {Object.entries(totalsByCurrency).map(([currency, total]) => (
+            <div key={currency} className="card flex items-center gap-3 py-3 px-5 min-w-[160px]">
+              <div className="flex flex-col">
+                <span className="text-xs text-gray-400 uppercase tracking-wide">{currency}</span>
+                <span className="text-xl font-bold text-green-700">
+                  {total.toLocaleString('es-ES', { maximumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+          ))}
+          <div className="card flex items-center gap-3 py-3 px-5 min-w-[160px] bg-gray-50">
+            <div className="flex flex-col">
+              <span className="text-xs text-gray-400 uppercase tracking-wide">Total pagos</span>
+              <span className="text-xl font-bold text-gray-700">{payments.length}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Property income chart */}
+      {!loading && propertyChartData.length > 0 && (
+        <div className="card">
+          <h2 className="text-base font-semibold text-gray-900 mb-1">Ingresos por Propiedad</h2>
+          <p className="text-xs text-gray-400 mb-4">{MONTH_NAMES[filterMonth - 1]} {filterYear}</p>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={propertyChartData} margin={{ top: 5, right: 20, left: 10, bottom: 60 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-35} textAnchor="end" interval={0} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)} />
+              <Tooltip formatter={(value: number, _name: string, props: any) => [
+                `${value.toLocaleString('es-ES')} ${props.payload.currency}`, 'Ingreso'
+              ]} />
+              <Bar dataKey="amount" radius={[4, 4, 0, 0]}
+                fill="#6366f1"
+                label={{ position: 'top', fontSize: 10, formatter: (v: number) => v >= 1000 ? `${(v/1000).toFixed(1)}k` : v }}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {loading ? <div className="text-center py-12 text-gray-400">Cargando...</div> : (
         <div className="card overflow-hidden p-0">

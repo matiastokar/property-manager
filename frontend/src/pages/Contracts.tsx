@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, Pencil, Trash2, FileText, XCircle } from 'lucide-react'
+import { Plus, Pencil, Trash2, FileText, XCircle, ToggleLeft } from 'lucide-react'
 import { contractsApi, propertiesApi, type Contract, type Property } from '../api/client'
 import Modal from '../components/Modal'
 
@@ -29,6 +29,7 @@ function ContractForm({ initial, properties, onSave, onCancel }: {
     end_date: initial?.end_date ?? '',
     monthly_rent: initial?.monthly_rent ?? '',
     currency: initial?.currency ?? 'EUR',
+    status: initial?.status ?? 'active',
     notes: initial?.notes ?? '',
   })
   const [saving, setSaving] = useState(false)
@@ -87,6 +88,16 @@ function ContractForm({ initial, properties, onSave, onCancel }: {
           </select>
         </div>
       </div>
+      {initial && (
+        <div>
+          <label className="label">Estado</label>
+          <select className="input" value={form.status} onChange={e => set('status', e.target.value)}>
+            <option value="active">Activo</option>
+            <option value="expired">Vencido</option>
+            <option value="finished">Finalizado</option>
+          </select>
+        </div>
+      )}
       <div>
         <label className="label">Notas</label>
         <textarea className="input" rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} />
@@ -151,6 +162,7 @@ export default function Contracts() {
   const handleUpdate = async (data: any) => { if (!editing) return; await contractsApi.update(editing.id, data); setEditing(null); load() }
   const handleFinish = async (data: any) => { if (!finishing) return; await contractsApi.finish(finishing.id, data); setFinishing(null); load() }
   const handleDelete = async (id: number) => { if (!confirm('¿Eliminar este contrato?')) return; await contractsApi.delete(id); load() }
+  const handleStatusChange = async (id: number, status: string) => { await contractsApi.update(id, { status }); load() }
 
   return (
     <div className="p-8 space-y-6">
@@ -192,7 +204,19 @@ export default function Contracts() {
                     {c.monthly_rent.toLocaleString('es-ES')} {c.currency}
                   </td>
                   <td className="px-6 py-3">
-                    <span className={STATUS_BADGE[c.status]}>{STATUS_LABEL[c.status]}</span>
+                    <select
+                      className={`text-xs font-semibold rounded-full px-2 py-1 border-0 cursor-pointer focus:ring-1 focus:ring-offset-0 ${
+                        c.status === 'active' ? 'bg-green-100 text-green-800' :
+                        c.status === 'expired' ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-gray-100 text-gray-600'
+                      }`}
+                      value={c.status}
+                      onChange={e => handleStatusChange(c.id, e.target.value)}
+                    >
+                      <option value="active">Activo</option>
+                      <option value="expired">Vencido</option>
+                      <option value="finished">Finalizado</option>
+                    </select>
                   </td>
                   <td className="px-6 py-3">
                     <div className="flex gap-1 justify-end">
