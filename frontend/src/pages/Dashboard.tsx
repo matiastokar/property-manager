@@ -114,6 +114,37 @@ export default function Dashboard() {
 
   const monthLabel = summary ? MONTH_NAMES[(summary.current_month ?? 1) - 1] : ''
 
+  // Prepare country chart data
+  const countryChartData = useMemo(() => {
+    if (!overview?.properties) return []
+    const byCountry: Record<string, { income: Record<string, number>; expenses: Record<string, number> }> = {}
+    for (const p of overview.properties) {
+      const country = p.country || 'Sin país'
+      if (!byCountry[country]) byCountry[country] = { income: {}, expenses: {} }
+      for (const [cur, val] of Object.entries(p.annual_income ?? {})) {
+        byCountry[country].income[cur] = (byCountry[country].income[cur] ?? 0) + (val as number)
+      }
+      for (const [cur, val] of Object.entries(p.annual_expenses ?? {})) {
+        byCountry[country].expenses[cur] = (byCountry[country].expenses[cur] ?? 0) + (val as number)
+      }
+    }
+    return Object.entries(byCountry).map(([country, data]) => {
+      const row: Record<string, any> = { name: country }
+      for (const [cur, val] of Object.entries(data.income)) row[`Ingreso ${cur}`] = Math.round(val)
+      for (const [cur, val] of Object.entries(data.expenses)) row[`Gasto ${cur}`] = Math.round(val)
+      return row
+    })
+  }, [overview])
+
+  const countryBarKeys = useMemo(() =>
+    Array.from(new Set(countryChartData.flatMap(d => Object.keys(d).filter(k => k !== 'name'))))
+  , [countryChartData])
+
+  const countryBarColor: Record<string, string> = {
+    'Ingreso EUR': '#6366f1', 'Ingreso USD': '#10b981', 'Ingreso ARS': '#06b6d4',
+    'Gasto EUR':   '#f97316', 'Gasto USD':   '#ef4444', 'Gasto ARS':   '#f59e0b',
+  }
+
   // Prepare chart data from overview
   const chartData = overview?.properties?.map((p: any) => ({
     name: p.property_name.length > 12 ? p.property_name.slice(0, 12) + '…' : p.property_name,
@@ -200,6 +231,26 @@ export default function Dashboard() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* Country chart */}
+      {countryChartData.length > 0 && (
+        <div className="card">
+          <h2 className="text-lg font-semibold text-gray-900 mb-1">Ingresos vs Gastos por País</h2>
+          <p className="text-xs text-gray-400 mb-4">Acumulado {overview?.year} · por moneda local</p>
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={countryChartData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }} barCategoryGap="30%">
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="name" tick={{ fontSize: 13 }} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)} />
+              <Tooltip formatter={(value: number, name: string) => [value.toLocaleString('es-ES'), name]} />
+              <Legend />
+              {countryBarKeys.map(key => (
+                <Bar key={key} dataKey={key} fill={countryBarColor[key] ?? '#94a3b8'} radius={[3, 3, 0, 0]} />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       )}
 

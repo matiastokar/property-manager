@@ -25,6 +25,7 @@ class RentPaymentCreate(BaseModel):
 
 class RentPaymentUpdate(BaseModel):
     amount: Optional[float] = None
+    currency: Optional[models.Currency] = None
     payment_date: Optional[date] = None
     payment_method: Optional[str] = None
     reference: Optional[str] = None

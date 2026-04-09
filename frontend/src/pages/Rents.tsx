@@ -1,7 +1,15 @@
-import { useEffect, useState } from 'react'
-import { Plus, Pencil, Trash2, CreditCard, CheckCircle, XCircle } from 'lucide-react'
+import { useEffect, useState, useMemo } from 'react'
+import { Plus, Pencil, Trash2, CheckCircle, XCircle, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
 import { rentsApi, contractsApi, type RentPayment, type Contract } from '../api/client'
 import Modal from '../components/Modal'
+
+type SortKey = 'property_name' | 'tenant_name' | 'payment_date' | 'amount'
+type SortDir = 'asc' | 'desc'
+
+function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; sortDir: SortDir }) {
+  if (col !== sortKey) return <ChevronsUpDown className="inline w-3 h-3 ml-1 text-gray-300" />
+  return sortDir === 'asc' ? <ChevronUp className="inline w-3 h-3 ml-1 text-blue-500" /> : <ChevronDown className="inline w-3 h-3 ml-1 text-blue-500" />
+}
 
 const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
@@ -130,6 +138,22 @@ export default function Rents() {
   const now = new Date()
   const [filterYear, setFilterYear] = useState(now.getFullYear())
   const [filterMonth, setFilterMonth] = useState(now.getMonth() + 1)
+  const [sortKey, setSortKey] = useState<SortKey>('property_name')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
+
+  function handleSort(key: SortKey) {
+    if (key === sortKey) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir('asc') }
+  }
+
+  const sorted = useMemo(() => [...payments].sort((a, b) => {
+    let av: any = a[sortKey], bv: any = b[sortKey]
+    if (typeof av === 'string') av = av.toLowerCase()
+    if (typeof bv === 'string') bv = bv.toLowerCase()
+    if (av < bv) return sortDir === 'asc' ? -1 : 1
+    if (av > bv) return sortDir === 'asc' ? 1 : -1
+    return 0
+  }), [payments, sortKey, sortDir])
 
   const load = () => Promise.all([
     rentsApi.list({ period_year: filterYear, period_month: filterMonth }),
@@ -170,10 +194,17 @@ export default function Rents() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-gray-500 bg-gray-50 border-b border-gray-100">
-                <th className="px-6 py-3 font-medium">Propiedad</th>
-                <th className="px-6 py-3 font-medium">Inquilino</th>
-                <th className="px-6 py-3 font-medium">Fecha pago</th>
-                <th className="px-6 py-3 font-medium text-right">Monto</th>
+                {([
+                  ['property_name', 'Propiedad', ''],
+                  ['tenant_name', 'Inquilino', ''],
+                  ['payment_date', 'Fecha pago', ''],
+                  ['amount', 'Monto', 'text-right'],
+                ] as [SortKey, string, string][]).map(([key, label, align]) => (
+                  <th key={key} className={`px-6 py-3 font-medium cursor-pointer select-none hover:text-gray-800 ${align}`}
+                    onClick={() => handleSort(key)}>
+                    {label}<SortIcon col={key} sortKey={sortKey} sortDir={sortDir} />
+                  </th>
+                ))}
                 <th className="px-6 py-3 font-medium">Método</th>
                 <th className="px-6 py-3 font-medium">Referencia</th>
                 <th className="px-6 py-3 font-medium text-center">Comprobante</th>
@@ -181,7 +212,7 @@ export default function Rents() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {payments.map(p => (
+              {sorted.map(p => (
                 <tr key={p.id} className="hover:bg-gray-50">
                   <td className="px-6 py-3 font-medium">{p.property_name}</td>
                   <td className="px-6 py-3 text-gray-600">{p.tenant_name}</td>

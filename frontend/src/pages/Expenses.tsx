@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Plus, Pencil, Trash2, Receipt } from 'lucide-react'
+import { useEffect, useState, useMemo } from 'react'
+import { Plus, Pencil, Trash2, Receipt, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
 import { expensesApi, incidentsApi, propertiesApi, type Expense, type Incident, type Property } from '../api/client'
 import Modal from '../components/Modal'
 
@@ -107,6 +107,14 @@ function ExpenseForm({ initial, properties, incidents, onSave, onCancel }: {
   )
 }
 
+type SortKey = 'expense_date' | 'property_name' | 'expense_type' | 'description' | 'amount'
+type SortDir = 'asc' | 'desc'
+
+function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; sortDir: SortDir }) {
+  if (col !== sortKey) return <ChevronsUpDown className="inline w-3 h-3 ml-1 text-gray-300" />
+  return sortDir === 'asc' ? <ChevronUp className="inline w-3 h-3 ml-1 text-blue-500" /> : <ChevronDown className="inline w-3 h-3 ml-1 text-blue-500" />
+}
+
 export default function Expenses() {
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [properties, setProperties] = useState<Property[]>([])
@@ -115,6 +123,23 @@ export default function Expenses() {
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Expense | null>(null)
   const [filterType, setFilterType] = useState('')
+  const [sortKey, setSortKey] = useState<SortKey>('expense_date')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+
+  function handleSort(key: SortKey) {
+    if (key === sortKey) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir('asc') }
+  }
+
+  const sorted = useMemo(() => [...expenses].sort((a, b) => {
+    let av: any = a[sortKey], bv: any = b[sortKey]
+    if (sortKey === 'amount') { av = a.amount; bv = b.amount }
+    if (typeof av === 'string') av = av.toLowerCase()
+    if (typeof bv === 'string') bv = bv.toLowerCase()
+    if (av < bv) return sortDir === 'asc' ? -1 : 1
+    if (av > bv) return sortDir === 'asc' ? 1 : -1
+    return 0
+  }), [expenses, sortKey, sortDir])
 
   const load = () => Promise.all([
     expensesApi.list(filterType ? { expense_type: filterType } : {}),
@@ -158,16 +183,23 @@ export default function Expenses() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-gray-500 bg-gray-50 border-b border-gray-100">
-                <th className="px-6 py-3 font-medium">Fecha</th>
-                <th className="px-6 py-3 font-medium">Propiedad</th>
-                <th className="px-6 py-3 font-medium">Tipo</th>
-                <th className="px-6 py-3 font-medium">Descripción</th>
-                <th className="px-6 py-3 font-medium text-right">Monto</th>
-                <th className="px-6 py-3 font-medium"></th>
+                {([
+                  ['expense_date', 'Fecha', ''],
+                  ['property_name', 'Propiedad', ''],
+                  ['expense_type', 'Tipo', ''],
+                  ['description', 'Descripción', ''],
+                  ['amount', 'Monto', 'text-right'],
+                ] as [SortKey, string, string][]).map(([key, label, align]) => (
+                  <th key={key} className={`px-6 py-3 font-medium cursor-pointer select-none hover:text-gray-800 ${align}`}
+                    onClick={() => handleSort(key)}>
+                    {label}<SortIcon col={key} sortKey={sortKey} sortDir={sortDir} />
+                  </th>
+                ))}
+                <th className="px-6 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {expenses.map(e => (
+              {sorted.map(e => (
                 <tr key={e.id} className="hover:bg-gray-50">
                   <td className="px-6 py-3 text-gray-500">{e.expense_date}</td>
                   <td className="px-6 py-3 font-medium">{e.property_name}</td>
