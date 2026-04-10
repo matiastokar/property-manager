@@ -19,6 +19,8 @@ class RecurringExpenseCreate(BaseModel):
 
 
 class RecurringExpenseUpdate(BaseModel):
+    property_id: Optional[int] = None
+    expense_type: Optional[models.ExpenseType] = None
     category: Optional[str] = None
     amount: Optional[float] = None
     currency: Optional[models.Currency] = None

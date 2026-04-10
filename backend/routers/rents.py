@@ -84,7 +84,6 @@ def get_missing_payments(
     active_contracts = db.query(models.Contract).filter(
         models.Contract.status == models.ContractStatus.ACTIVE
     ).all()
-
     missing = []
     for contract in active_contracts:
         payment = db.query(models.RentPayment).filter(
@@ -103,6 +102,46 @@ def get_missing_payments(
                 "currency": contract.currency.value,
             })
     return missing
+
+
+@router.get("/payment-status")
+def get_payment_status(
+    period_year: int,
+    period_month: int,
+    db: Session = Depends(get_db)
+):
+    """Return all active contracts with their payment status for the given period."""
+    active_contracts = db.query(models.Contract).filter(
+        models.Contract.status == models.ContractStatus.ACTIVE
+    ).order_by(models.Contract.property_id).all()
+
+    result = []
+    for contract in active_contracts:
+        # Skip contracts that haven't started yet for this period
+        period_start = date(period_year, period_month, 1)
+        if contract.start_date and contract.start_date > period_start:
+            continue
+
+        payment = db.query(models.RentPayment).filter(
+            models.RentPayment.contract_id == contract.id,
+            models.RentPayment.period_year == period_year,
+            models.RentPayment.period_month == period_month
+        ).first()
+        result.append({
+            "contract_id": contract.id,
+            "tenant_name": contract.tenant_name,
+            "tenant_email": contract.tenant_email,
+            "tenant_phone": contract.tenant_phone,
+            "property_id": contract.property_id,
+            "property_name": contract.property.name if contract.property else None,
+            "country": contract.property.country if contract.property else None,
+            "city": contract.property.city if contract.property else None,
+            "expected_amount": contract.monthly_rent,
+            "currency": contract.currency.value,
+            "paid": payment is not None,
+            "payment": payment_to_dict(payment) if payment else None,
+        })
+    return result
 
 
 @router.get("/{payment_id}")

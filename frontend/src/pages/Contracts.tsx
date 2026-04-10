@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Plus, Pencil, Trash2, FileText, XCircle, ToggleLeft } from 'lucide-react'
+import { useEffect, useState, useMemo } from 'react'
+import { Plus, Pencil, Trash2, FileText, XCircle, ToggleLeft, AlertTriangle, Phone, Mail } from 'lucide-react'
 import { contractsApi, propertiesApi, type Contract, type Property } from '../api/client'
 import Modal from '../components/Modal'
 
@@ -164,6 +164,33 @@ export default function Contracts() {
   const handleDelete = async (id: number) => { if (!confirm('¿Eliminar este contrato?')) return; await contractsApi.delete(id); load() }
   const handleStatusChange = async (id: number, status: string) => { await contractsApi.update(id, { status }); load() }
 
+  // Contracts expiring in the next 2 months
+  const expiringSoon = useMemo(() => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const in2Months = new Date(today)
+    in2Months.setMonth(in2Months.getMonth() + 2)
+    return contracts
+      .filter(c => {
+        if (c.status !== 'active') return false
+        const endDate = new Date(c.finish_date ?? c.end_date ?? '')
+        return endDate >= today && endDate <= in2Months
+      })
+      .sort((a, b) => {
+        const da = new Date(a.finish_date ?? a.end_date ?? '').getTime()
+        const db = new Date(b.finish_date ?? b.end_date ?? '').getTime()
+        return da - db
+      })
+  }, [contracts])
+
+  const daysUntil = (dateStr: string) => {
+    const end = new Date(dateStr)
+    end.setHours(0, 0, 0, 0)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    return Math.round((end.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+  }
+
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
@@ -175,6 +202,61 @@ export default function Contracts() {
           <Plus className="w-4 h-4" /> Nuevo contrato
         </button>
       </div>
+
+      {/* Expiring soon alert */}
+      {!loading && expiringSoon.length > 0 && (
+        <div className="border border-amber-200 bg-amber-50 rounded-xl overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3 bg-amber-100 border-b border-amber-200">
+            <AlertTriangle className="w-4 h-4 text-amber-600" />
+            <h2 className="text-sm font-semibold text-amber-800">
+              {expiringSoon.length} contrato{expiringSoon.length !== 1 ? 's' : ''} vence{expiringSoon.length === 1 ? '' : 'n'} en los próximos 2 meses
+            </h2>
+          </div>
+          <div className="divide-y divide-amber-100">
+            {expiringSoon.map(c => {
+              const endDate = c.finish_date ?? c.end_date ?? ''
+              const days = daysUntil(endDate)
+              const urgency = days <= 30 ? 'text-red-600 font-bold' : 'text-amber-700 font-semibold'
+              return (
+                <div key={c.id} className="px-5 py-3 flex items-center gap-4 flex-wrap">
+                  <div className={`text-sm min-w-[70px] ${urgency}`}>
+                    {days === 0 ? 'Hoy' : days === 1 ? 'Mañana' : `${days} días`}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <span className="font-medium text-gray-900 text-sm">{c.property_name}</span>
+                    <span className="text-gray-400 mx-2">·</span>
+                    <span className="text-gray-700 text-sm">{c.tenant_name}</span>
+                    <span className="text-xs text-gray-400 ml-2">vence {endDate}</span>
+                  </div>
+                  <div className="flex items-center gap-4 text-sm">
+                    {c.tenant_phone && (
+                      <a href={`tel:${c.tenant_phone}`}
+                        className="flex items-center gap-1.5 text-blue-600 hover:text-blue-800 font-medium">
+                        <Phone className="w-3.5 h-3.5" />
+                        {c.tenant_phone}
+                      </a>
+                    )}
+                    {c.tenant_email && (
+                      <a href={`mailto:${c.tenant_email}`}
+                        className="flex items-center gap-1.5 text-blue-600 hover:text-blue-800">
+                        <Mail className="w-3.5 h-3.5" />
+                        {c.tenant_email}
+                      </a>
+                    )}
+                    {!c.tenant_phone && !c.tenant_email && (
+                      <span className="text-gray-400 text-xs italic">Sin datos de contacto</span>
+                    )}
+                  </div>
+                  <button className="text-xs text-gray-400 hover:text-blue-600 underline"
+                    onClick={() => setEditing(c)}>
+                    Editar
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {loading ? <div className="text-center py-12 text-gray-400">Cargando...</div> : (
         <div className="card overflow-hidden p-0">

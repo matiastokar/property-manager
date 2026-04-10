@@ -5,6 +5,40 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+// Attach JWT token to every request
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('pm_token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+// Redirect to login on 401
+api.interceptors.response.use(
+  res => res,
+  err => {
+    if (err.response?.status === 401) {
+      localStorage.removeItem('pm_token')
+      localStorage.removeItem('pm_username')
+      window.location.href = '/login'
+    }
+    return Promise.reject(err)
+  }
+)
+
+export const authApi = {
+  login: async (username: string, password: string) => {
+    const form = new URLSearchParams()
+    form.append('username', username)
+    form.append('password', password)
+    const res = await axios.post('/api/auth/login', form, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    })
+    return res.data as { access_token: string; token_type: string; username: string }
+  },
+  changePassword: (data: { current_password: string; new_password: string }) =>
+    api.post('/auth/change-password', data).then(r => r.data),
+}
+
 export default api
 
 // Types
@@ -135,12 +169,48 @@ export const incidentsApi = {
   delete: (id: number) => api.delete(`/incidents/${id}`).then(r => r.data),
 }
 
+export interface PaymentStatus {
+  contract_id: number
+  tenant_name: string
+  tenant_email?: string
+  tenant_phone?: string
+  property_id: number
+  property_name: string
+  country?: string
+  city?: string
+  expected_amount: number
+  currency: Currency
+  paid: boolean
+  payment: RentPayment | null
+}
+
 export const rentsApi = {
   list: (params?: { contract_id?: number; period_year?: number; period_month?: number }) => api.get<RentPayment[]>('/rents/', { params }).then(r => r.data),
   getMissing: (period_year: number, period_month: number) => api.get('/rents/missing', { params: { period_year, period_month } }).then(r => r.data),
+  getPaymentStatus: (period_year: number, period_month: number) => api.get<PaymentStatus[]>('/rents/payment-status', { params: { period_year, period_month } }).then(r => r.data),
   create: (data: Omit<RentPayment, 'id' | 'created_at' | 'tenant_name' | 'property_name' | 'property_id'>) => api.post('/rents/', data).then(r => r.data),
   update: (id: number, data: Partial<RentPayment>) => api.put(`/rents/${id}`, data).then(r => r.data),
   delete: (id: number) => api.delete(`/rents/${id}`).then(r => r.data),
+}
+
+export interface RecurringExpense {
+  id: number
+  property_id: number
+  property_name?: string
+  expense_type: ExpenseType
+  category: string
+  amount: number
+  currency: Currency
+  description: string
+  active: boolean
+  created_at: string
+}
+
+export const recurringApi = {
+  list: (property_id?: number) => api.get<RecurringExpense[]>('/recurring-expenses/', { params: property_id ? { property_id } : {} }).then(r => r.data),
+  create: (data: Omit<RecurringExpense, 'id' | 'created_at' | 'property_name'>) => api.post('/recurring-expenses/', data).then(r => r.data),
+  update: (id: number, data: Partial<RecurringExpense>) => api.put(`/recurring-expenses/${id}`, data).then(r => r.data),
+  delete: (id: number) => api.delete(`/recurring-expenses/${id}`).then(r => r.data),
 }
 
 export const dashboardApi = {

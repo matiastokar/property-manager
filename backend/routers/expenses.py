@@ -22,6 +22,8 @@ class ExpenseCreate(BaseModel):
 
 
 class ExpenseUpdate(BaseModel):
+    property_id: Optional[int] = None
+    expense_type: Optional[models.ExpenseType] = None
     incident_id: Optional[int] = None
     category: Optional[str] = None
     amount: Optional[float] = None

@@ -156,3 +156,64 @@ class RentPayment(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     contract = relationship("Contract", back_populates="rent_payments")
+
+
+class BankImportStatus(str, PyEnum):
+    PENDING   = "pending"
+    COMPLETED = "completed"
+
+
+class BankImport(Base):
+    __tablename__ = "bank_imports"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    filename   = Column(String, nullable=False)
+    period_month = Column(Integer, nullable=False)
+    period_year  = Column(Integer, nullable=False)
+    currency   = Column(Enum(Currency), nullable=False, default=Currency.EUR)
+    status     = Column(Enum(BankImportStatus), default=BankImportStatus.PENDING)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    rows = relationship("BankImportRow", back_populates="bank_import", cascade="all, delete")
+
+
+class BankImportRowStatus(str, PyEnum):
+    PENDING   = "pending"
+    CONFIRMED = "confirmed"
+    IGNORED   = "ignored"
+
+
+class BankImportRow(Base):
+    __tablename__ = "bank_import_rows"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    bank_import_id  = Column(Integer, ForeignKey("bank_imports.id"), nullable=False)
+    transaction_date = Column(Date, nullable=True)
+    description     = Column(String, nullable=False)
+    amount          = Column(Float, nullable=False)   # positive=credit, negative=debit
+    currency        = Column(Enum(Currency), nullable=False, default=Currency.EUR)
+    # Suggested / user-confirmed mapping
+    suggested_property_id  = Column(Integer, ForeignKey("properties.id"), nullable=True)
+    confirmed_property_id  = Column(Integer, ForeignKey("properties.id"), nullable=True)
+    suggested_type         = Column(String, nullable=True)   # "income" | "expense"
+    confirmed_type         = Column(String, nullable=True)
+    suggested_category     = Column(String, nullable=True)
+    confirmed_category     = Column(String, nullable=True)
+    status   = Column(Enum(BankImportRowStatus), default=BankImportRowStatus.PENDING)
+    # Link to created record
+    created_expense_id     = Column(Integer, ForeignKey("expenses.id"), nullable=True)
+    created_payment_id     = Column(Integer, ForeignKey("rent_payments.id"), nullable=True)
+
+    bank_import = relationship("BankImport", back_populates="rows")
+    suggested_property = relationship("Property", foreign_keys=[suggested_property_id])
+    confirmed_property = relationship("Property", foreign_keys=[confirmed_property_id])
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, nullable=False, index=True)
+    hashed_password = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
