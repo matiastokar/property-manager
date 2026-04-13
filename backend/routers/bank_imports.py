@@ -1,6 +1,6 @@
 import io, csv, re
 from datetime import date, datetime
-from typing import Optional, List
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -10,17 +10,15 @@ import models
 
 router = APIRouter(prefix="/api/bank-imports", tags=["bank-imports"])
 
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Amount / date parsers ─────────────────────────────────────────────────────
 
 def parse_amount(s: str) -> Optional[float]:
-    """Parse amount string handling dots/commas as thousand separators or decimals."""
-    s = s.strip().replace(' ', '').replace('\xa0', '')
-    if not s or s == '-':
+    s = str(s).strip().replace('\xa0', '').replace(' ', '')
+    if not s or s in ('-', '—', ''):
         return None
     negative = s.startswith('-') or s.startswith('(')
     s = s.lstrip('+-').strip('()')
-    # Detect format: 1.234,56 (EU) vs 1,234.56 (US)
+    # EU format 1.234,56  vs  US format 1,234.56
     if re.search(r'\.\d{3}', s) and ',' in s:
         s = s.replace('.', '').replace(',', '.')
     elif re.search(r',\d{3}', s) and '.' in s:
@@ -28,15 +26,14 @@ def parse_amount(s: str) -> Optional[float]:
     else:
         s = s.replace(',', '.')
     try:
-        val = float(s)
-        return -val if negative else val
+        v = float(s)
+        return -v if negative else v
     except ValueError:
         return None
 
 
 def parse_date(s: str) -> Optional[date]:
-    """Try common date formats."""
-    s = s.strip()
+    s = str(s).strip()
     for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%m/%d/%Y',
                 '%d/%m/%y', '%d.%m.%Y', '%d.%m.%y'):
         try:
@@ -46,8 +43,9 @@ def parse_date(s: str) -> Optional[date]:
     return None
 
 
+# ── Property matching ─────────────────────────────────────────────────────────
+
 def score_property(description: str, prop: models.Property) -> int:
-    """Return match score between transaction description and a property."""
     desc = description.lower()
     score = 0
     for word in re.split(r'\W+', prop.name.lower()):
@@ -64,151 +62,320 @@ def score_property(description: str, prop: models.Property) -> int:
 
 
 def suggest_row(row: models.BankImportRow, properties: list):
-    """Fill suggested_property, suggested_type, suggested_category using heuristics."""
-    best_prop = None
-    best_score = 0
+    best_prop, best_score = None, 0
     for prop in properties:
         s = score_property(row.description, prop)
         if s > best_score:
-            best_score = s
-            best_prop = prop
-
+            best_score, best_prop = s, prop
     if best_prop and best_score >= 2:
         row.suggested_property_id = best_prop.id
 
-    # Type: credits = income, debits = expense
     if row.amount > 0:
         row.suggested_type = "income"
         row.suggested_category = "rent"
     else:
         row.suggested_type = "expense"
         desc = row.description.lower()
-        if any(k in desc for k in ['hipotec', 'mortgage', 'prestamo', 'préstamo']):
+        if any(k in desc for k in ['hipotec', 'mortgage', 'prestamo', 'préstamo', 'bankinter', 'caixabank', 'sabadell']):
             row.suggested_category = "mortgage"
-        elif any(k in desc for k in ['comunidad', 'community', 'hoa']):
+        elif any(k in desc for k in ['comunidad', 'community', 'hoa', 'vecinos']):
             row.suggested_category = "hoa"
-        elif any(k in desc for k in ['seguro', 'insurance']):
+        elif any(k in desc for k in ['seguro', 'insurance', 'occident', 'mapfre', 'axa']):
             row.suggested_category = "insurance"
         elif any(k in desc for k in ['limpieza', 'cleaning']):
             row.suggested_category = "cleaning"
+        elif any(k in desc for k in ['internet', 'telefon', 'movistar', 'orange', 'vodafone', 'fiber']):
+            row.suggested_category = "internet"
+        elif any(k in desc for k in ['luz', 'electr', 'endesa', 'iberdrola', 'naturgy', 'repsol elec', 'holaluz', 'eléctric']):
+            row.suggested_category = "electricity"
+        elif any(k in desc for k in ['gas', 'naturgas', 'repsol gas']):
+            row.suggested_category = "gas"
+        elif any(k in desc for k in ['agua', 'water', 'aigues', 'aguas', 'canal de isabel']):
+            row.suggested_category = "water"
+        elif any(k in desc for k in ['tribut', 'impuest', 'ibi', 'icio', 'hacienda', 'agencia tributaria', 'tax', 'tasa', 'irpf', 'iva ']):
+            row.suggested_category = "tax"
         else:
             row.suggested_category = "other"
 
 
-def parse_csv_bytes(content: bytes, currency: models.Currency) -> list[dict]:
-    """Parse CSV and return list of raw transaction dicts."""
-    text = content.decode('utf-8-sig', errors='replace')
-    reader = csv.DictReader(io.StringIO(text))
+# ── PDF parser ────────────────────────────────────────────────────────────────
+
+# Patterns for text-based PDF parsing (handles OpenBank and similar formats)
+_DATE_ROW   = re.compile(r'^(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})\s+(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})\s*(.*)')
+_AMOUNT_EOL = re.compile(r'([-+]?\d[\d.,]+)\s*(?:EUR|USD|ARS)\s+([-+]?\d[\d.,]+)\s*(?:EUR|USD|ARS)\s*$')
+_AMOUNT_SINGLE = re.compile(r'([-+]?\d[\d.,]+)\s*(?:EUR|USD|ARS)\s*$')
+_SKIP = re.compile(r'Fecha|Operación|Valor|Concepto|Saldo|Importe|OpenBank|Registro|litnacreM|oilicimoD|FIN|NIF|IBAN|titular|entidad|Cuenta|CUENTA|Folio|Tomo|Hoja', re.I)
+
+
+def _parse_openbank_text(full_text: str) -> list[dict]:
+    """Parse Spanish bank statement text format (date / description / amount EUR balance EUR)."""
     rows = []
-    for line in reader:
-        keys = list(line.keys())
-        # Find date column
-        date_val = None
-        for k in keys:
-            if any(w in k.lower() for w in ['fecha', 'date', 'data', 'dat']):
-                date_val = parse_date(str(line[k]))
-                if date_val:
-                    break
-        # Find description column
-        desc = ''
-        for k in keys:
-            if any(w in k.lower() for w in ['concepto', 'descripcion', 'descripción',
-                                              'description', 'detail', 'detalle', 'movimiento']):
-                desc = str(line[k]).strip()
-                break
-        if not desc:
-            desc = ' '.join(str(v) for v in list(line.values())[:3])
-
-        # Find amount — try debit/credit columns first, then single amount column
-        amount = None
-        debit_col = next((k for k in keys if any(w in k.lower() for w in
-                          ['debito', 'débito', 'cargo', 'debit', 'salida'])), None)
-        credit_col = next((k for k in keys if any(w in k.lower() for w in
-                           ['credito', 'crédito', 'abono', 'credit', 'entrada', 'haber'])), None)
-        if debit_col and credit_col:
-            debit  = parse_amount(str(line.get(debit_col, '') or ''))
-            credit = parse_amount(str(line.get(credit_col, '') or ''))
-            if credit and (not debit or debit == 0):
-                amount = abs(credit)
-            elif debit and (not credit or credit == 0):
-                amount = -abs(debit)
-        else:
-            for k in keys:
-                if any(w in k.lower() for w in ['importe', 'monto', 'amount', 'valor', 'saldo']):
-                    amount = parse_amount(str(line[k]))
-                    if amount is not None:
-                        break
-
-        if amount is None:
-            continue
-        rows.append({'date': date_val, 'description': desc, 'amount': amount})
-    return rows
+    lines = [l.strip() for l in full_text.splitlines() if l.strip()]
+    current = None
+    for line in lines:
+        dm = _DATE_ROW.match(line)
+        if dm:
+            if current and current['amount'] is not None:
+                rows.append(current)
+            current = {
+                'date': parse_date(dm.group(1)),
+                'desc_parts': [dm.group(3)] if dm.group(3) else [],
+                'amount': None,
+            }
+        elif current is not None:
+            am = _AMOUNT_EOL.search(line)
+            if am:
+                current['amount'] = parse_amount(am.group(1))
+                if current['amount'] is not None:
+                    rows.append(current)
+                current = None
+            elif not _SKIP.search(line):
+                current['desc_parts'].append(line)
+    if current and current['amount'] is not None:
+        rows.append(current)
+    return [{'date': r['date'],
+             'description': ' '.join(r['desc_parts']).strip() or '(sin descripción)',
+             'amount': r['amount']} for r in rows]
 
 
 def parse_pdf_bytes(content: bytes, currency: models.Currency) -> list[dict]:
-    """Parse PDF extracting text lines and heuristically finding transactions."""
     import pdfplumber
-    rows = []
+    rows: list[dict] = []
+
     with pdfplumber.open(io.BytesIO(content)) as pdf:
+        full_text = ''
+        table_rows_found = False
+
         for page in pdf.pages:
-            # Try table extraction first
+            # ── Try structured table extraction first ──────────────────────
             tables = page.extract_tables()
             for table in tables:
-                if not table:
+                if not table or len(table) < 2:
                     continue
-                # Determine column positions from header row
-                header = [str(c or '').lower() for c in table[0]]
-                date_idx = next((i for i, h in enumerate(header)
-                                 if any(w in h for w in ['fecha', 'date', 'data'])), None)
-                desc_idx = next((i for i, h in enumerate(header)
-                                 if any(w in h for w in ['concepto', 'descripcion', 'description',
-                                                          'detalle', 'detail', 'movimiento'])), None)
-                amount_idx = next((i for i, h in enumerate(header)
-                                   if any(w in h for w in ['importe', 'amount', 'monto', 'valor'])), None)
-                debit_idx  = next((i for i, h in enumerate(header)
-                                   if any(w in h for w in ['debito', 'débito', 'cargo', 'debit'])), None)
-                credit_idx = next((i for i, h in enumerate(header)
-                                   if any(w in h for w in ['credito', 'crédito', 'abono', 'credit', 'haber'])), None)
+                header = [str(c or '').lower().strip() for c in table[0]]
+                date_idx   = next((i for i, h in enumerate(header) if any(w in h for w in ['fecha','date','data'])), None)
+                desc_idx   = next((i for i, h in enumerate(header) if any(w in h for w in ['concepto','descripcion','description','detalle','movimiento'])), None)
+                amount_idx = next((i for i, h in enumerate(header) if any(w in h for w in ['importe','amount','monto','valor'])), None)
+                debit_idx  = next((i for i, h in enumerate(header) if any(w in h for w in ['debito','débito','cargo','debit','salida'])), None)
+                credit_idx = next((i for i, h in enumerate(header) if any(w in h for w in ['credito','crédito','abono','credit','entrada','haber'])), None)
 
                 for row in table[1:]:
                     if not row:
                         continue
-                    date_val = parse_date(str(row[date_idx] or '')) if date_idx is not None else None
-                    desc = str(row[desc_idx] or '').strip() if desc_idx is not None else ''
-                    if not desc:
-                        desc = ' | '.join(str(c or '') for c in row if c)
-
+                    d = parse_date(str(row[date_idx] or '')) if date_idx is not None else None
+                    desc = str(row[desc_idx] or '').strip() if desc_idx is not None else \
+                           ' | '.join(str(c or '') for c in row if c)
                     amount = None
                     if debit_idx is not None and credit_idx is not None:
-                        d = parse_amount(str(row[debit_idx] or ''))
-                        c = parse_amount(str(row[credit_idx] or ''))
-                        if c and (not d or d == 0):
-                            amount = abs(c)
-                        elif d and (not c or c == 0):
-                            amount = -abs(d)
+                        dv = parse_amount(str(row[debit_idx] or ''))
+                        cv = parse_amount(str(row[credit_idx] or ''))
+                        if cv and (not dv or dv == 0):
+                            amount = abs(cv)
+                        elif dv and (not cv or cv == 0):
+                            amount = -abs(dv)
                     elif amount_idx is not None:
                         amount = parse_amount(str(row[amount_idx] or ''))
+                    if amount is not None and desc:
+                        rows.append({'date': d, 'description': desc, 'amount': amount})
+                        table_rows_found = True
 
-                    if amount is None:
-                        continue
-                    rows.append({'date': date_val, 'description': desc, 'amount': amount})
+            full_text += (page.extract_text() or '') + '\n'
 
-            # Fallback: raw text line parsing if no tables found
-            if not tables:
-                text = page.extract_text() or ''
-                date_pattern = re.compile(
-                    r'(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})\s+(.+?)\s+([-+]?\d[\d.,]+)\s*$'
-                )
-                for line in text.splitlines():
-                    m = date_pattern.search(line)
-                    if m:
-                        d = parse_date(m.group(1))
-                        desc = m.group(2).strip()
-                        amount = parse_amount(m.group(3))
-                        if amount is not None:
-                            rows.append({'date': d, 'description': desc, 'amount': amount})
+        # ── Fallback: text-based parsing (OpenBank and similar) ────────────
+        if not table_rows_found and full_text.strip():
+            rows = _parse_openbank_text(full_text)
+
     return rows
 
+
+# ── CSV parser ────────────────────────────────────────────────────────────────
+
+def _norm(s: str) -> str:
+    """Lowercase + strip accents for column-name matching."""
+    return (s.lower()
+             .replace('á','a').replace('é','e').replace('í','i')
+             .replace('ó','o').replace('ú','u').replace('ü','u')
+             .strip())
+
+
+def parse_csv_bytes(content: bytes, currency: models.Currency) -> list[dict]:
+    # 1. Decode
+    text = None
+    enc_used = None
+    for enc in ('utf-8-sig', 'utf-8', 'latin-1', 'cp1252'):
+        try:
+            text = content.decode(enc)
+            enc_used = enc
+            break
+        except Exception:
+            continue
+    if text is None:
+        raise ValueError("No se pudo decodificar el archivo CSV. Guardalo como UTF-8 o Latin-1.")
+
+    lines = text.splitlines()
+    if not lines:
+        raise ValueError("El archivo CSV está vacío.")
+
+    # 2. Detect delimiter using ALL lines (not just the first, which may be a title)
+    semi_count = sum(l.count(';') for l in lines)
+    comma_count = sum(l.count(',') for l in lines)
+    # If many commas but they look like decimal separators (digit,digit), discount them
+    decimal_comma_count = sum(len(re.findall(r'\d,\d', l)) for l in lines)
+    comma_count = max(0, comma_count - decimal_comma_count)
+    delimiter = ';' if semi_count > comma_count else ','
+
+    # 3. Find the real header row (skip metadata lines at the top)
+    #    Look for the first line with ≥ 2 known column-name keywords
+    HEADER_KW = ['fecha', 'date', 'concepto', 'descripci', 'importe',
+                 'amount', 'debito', 'credito', 'saldo', 'divisa', 'monto',
+                 'movimiento', 'valor']
+    header_line_idx = 0
+    for i, line in enumerate(lines):
+        normalized = _norm(line)
+        if sum(1 for kw in HEADER_KW if kw in normalized) >= 2:
+            header_line_idx = i
+            break
+
+    csv_text = '\n'.join(lines[header_line_idx:])
+    reader = csv.DictReader(io.StringIO(csv_text), delimiter=delimiter)
+
+    # Normalised key map: norm_key → original_key
+    fieldnames = reader.fieldnames or []
+    norm_keys = {_norm(k): k for k in fieldnames}
+
+    def find_col(*keywords):
+        for kw in keywords:
+            for nk, ok in norm_keys.items():
+                if kw in nk:
+                    return ok
+        return None
+
+    date_col   = find_col('fecha contable', 'fecha op', 'f.op', 'fecha', 'date', 'data', 'fec')
+    desc_col   = find_col('descripci', 'concepto', 'description', 'detalle', 'movimiento', 'texto')
+    amount_col = find_col('importe', 'monto', 'amount')
+    debit_col  = find_col('debito', 'cargo', 'debit', 'salida', 'retiro')
+    credit_col = find_col('credito', 'abono', 'credit', 'entrada', 'haber', 'deposito')
+
+    rows = []
+    for line in reader:
+        if not any(v and str(v).strip() for v in line.values()):
+            continue  # skip blank rows
+
+        # Date
+        date_val = parse_date(str(line.get(date_col) or '')) if date_col else None
+
+        # Description
+        desc = str(line.get(desc_col) or '').strip() if desc_col else ''
+        if not desc:
+            desc = ' '.join(str(v) for v in list(line.values())[:3] if v and str(v).strip())
+
+        # Amount
+        amount = None
+        if debit_col and credit_col:
+            dv = parse_amount(str(line.get(debit_col) or ''))
+            cv = parse_amount(str(line.get(credit_col) or ''))
+            if cv and (not dv or dv == 0):
+                amount = abs(cv)
+            elif dv and (not cv or cv == 0):
+                amount = -abs(dv)
+        elif amount_col:
+            amount = parse_amount(str(line.get(amount_col) or ''))
+        else:
+            # Last resort: try every column
+            for k, v in line.items():
+                if k in (date_col, desc_col):
+                    continue
+                amount = parse_amount(str(v or ''))
+                if amount is not None:
+                    break
+
+        if amount is None or desc == '':
+            continue
+
+        rows.append({'date': date_val, 'description': desc, 'amount': amount})
+
+    return rows
+
+
+# ── XLS / XLSX parser ─────────────────────────────────────────────────────────
+
+def parse_excel_bytes(content: bytes, filename: str, currency: models.Currency) -> list[dict]:
+    import openpyxl
+    rows = []
+    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    ws = wb.active
+
+    all_rows = list(ws.iter_rows(values_only=True))
+    if not all_rows:
+        return []
+
+    # Find header row (first row with text content)
+    header_row_idx = 0
+    header = []
+    for i, row in enumerate(all_rows[:10]):
+        cells = [str(c or '').lower().strip() for c in row]
+        if any(any(w in c for w in ['fecha','date','concepto','descripcion','importe','amount','debito','credito']) for c in cells):
+            header = cells
+            header_row_idx = i
+            break
+
+    if not header:
+        # No header found, try positional: col0=date, col1=desc, col2=amount
+        for row in all_rows:
+            if not any(row):
+                continue
+            d = parse_date(str(row[0] or '')) if len(row) > 0 else None
+            desc = str(row[1] or '').strip() if len(row) > 1 else ''
+            amount = parse_amount(str(row[2] or '')) if len(row) > 2 else None
+            if amount is not None:
+                rows.append({'date': d, 'description': desc, 'amount': amount})
+        return rows
+
+    date_idx   = next((i for i, h in enumerate(header) if any(w in h for w in ['fecha','date','data','f.op','fec'])), None)
+    desc_idx   = next((i for i, h in enumerate(header) if any(w in h for w in ['concepto','descripcion','description','detalle','movimiento','texto'])), None)
+    amount_idx = next((i for i, h in enumerate(header) if any(w in h for w in ['importe','monto','amount','valor'])), None)
+    debit_idx  = next((i for i, h in enumerate(header) if any(w in h for w in ['debito','débito','cargo','debit','salida'])), None)
+    credit_idx = next((i for i, h in enumerate(header) if any(w in h for w in ['credito','crédito','abono','credit','entrada','haber'])), None)
+
+    for row in all_rows[header_row_idx + 1:]:
+        if not any(row):
+            continue
+        def cell(idx):
+            return str(row[idx] or '').strip() if idx is not None and idx < len(row) else ''
+
+        d = parse_date(cell(date_idx)) if date_idx is not None else None
+        # Try parsing as Excel date serial number
+        if d is None and date_idx is not None and row[date_idx]:
+            try:
+                from openpyxl.utils.datetime import from_excel
+                d = from_excel(row[date_idx]).date()
+            except Exception:
+                pass
+
+        desc = cell(desc_idx) if desc_idx is not None else ' | '.join(str(c or '') for c in row if c)
+        amount = None
+        if debit_idx is not None and credit_idx is not None:
+            dv = parse_amount(cell(debit_idx))
+            cv = parse_amount(cell(credit_idx))
+            if cv and (not dv or dv == 0):
+                amount = abs(cv)
+            elif dv and (not cv or cv == 0):
+                amount = -abs(dv)
+        elif amount_idx is not None:
+            v = row[amount_idx]
+            if isinstance(v, (int, float)):
+                amount = float(v)
+            else:
+                amount = parse_amount(cell(amount_idx))
+
+        if amount is not None and desc:
+            rows.append({'date': d, 'description': desc, 'amount': amount})
+
+    wb.close()
+    return rows
+
+
+# ── Serialization ─────────────────────────────────────────────────────────────
 
 def row_to_dict(r: models.BankImportRow) -> dict:
     return {
@@ -268,27 +435,45 @@ async def upload_statement(
     period_month: int = Form(...),
     period_year: int = Form(...),
     currency: str = Form("EUR"),
+    property_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
 ):
     content = await file.read()
     filename = file.filename or "upload"
     cur = models.Currency(currency)
+    fname_lower = filename.lower()
 
-    # Parse file
-    if filename.lower().endswith('.pdf'):
-        raw_rows = parse_pdf_bytes(content, cur)
-    elif filename.lower().endswith('.csv'):
-        raw_rows = parse_csv_bytes(content, cur)
-    else:
-        raise HTTPException(status_code=400, detail="Solo se admiten archivos PDF o CSV")
+    try:
+        if fname_lower.endswith('.pdf'):
+            raw_rows = parse_pdf_bytes(content, cur)
+        elif fname_lower.endswith('.csv'):
+            raw_rows = parse_csv_bytes(content, cur)
+        elif fname_lower.endswith(('.xlsx', '.xls')):
+            raw_rows = parse_excel_bytes(content, filename, cur)
+        else:
+            raise HTTPException(status_code=400, detail="Solo se admiten archivos PDF, CSV, XLS o XLSX")
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500,
+            detail=f"Error interno al procesar el archivo: {type(e).__name__}: {e}")
 
     if not raw_rows:
-        raise HTTPException(status_code=422, detail="No se encontraron transacciones en el archivo")
+        raise HTTPException(status_code=422,
+            detail="No se encontraron transacciones en el archivo. "
+                   "Verificá que el archivo tenga datos y que el formato sea compatible.")
 
-    # Load properties for matching
+    # Validate fixed property if provided
+    fixed_property = None
+    if property_id:
+        fixed_property = db.query(models.Property).filter(models.Property.id == property_id).first()
+        if not fixed_property:
+            raise HTTPException(status_code=404, detail="Propiedad no encontrada")
+
     properties = db.query(models.Property).all()
 
-    # Create import record
     bank_import = models.BankImport(
         filename=filename,
         period_month=period_month,
@@ -307,7 +492,13 @@ async def upload_statement(
             amount=raw['amount'],
             currency=cur,
         )
-        suggest_row(row, properties)
+        if fixed_property:
+            # User pre-selected a property: assign it directly, still suggest type/category
+            row.suggested_property_id = fixed_property.id
+            suggest_row(row, properties)           # fills type & category
+            row.suggested_property_id = fixed_property.id  # ensure it stays after suggest_row
+        else:
+            suggest_row(row, properties)
         db.add(row)
 
     db.commit()
@@ -344,7 +535,6 @@ def update_row(import_id: int, row_id: int, data: RowUpdate, db: Session = Depen
 
 @router.post("/{import_id}/confirm")
 def confirm_import(import_id: int, db: Session = Depends(get_db)):
-    """Import all confirmed rows into expenses or rent payments."""
     bank_import = db.query(models.BankImport).filter(models.BankImport.id == import_id).first()
     if not bank_import:
         raise HTTPException(status_code=404, detail="Import not found")
@@ -356,8 +546,7 @@ def confirm_import(import_id: int, db: Session = Depends(get_db)):
         models.BankImportRow.created_payment_id == None,
     ).all()
 
-    created_expenses = 0
-    created_payments = 0
+    created_expenses = created_payments = 0
 
     for row in rows:
         prop_id = row.confirmed_property_id or row.suggested_property_id
@@ -369,7 +558,6 @@ def confirm_import(import_id: int, db: Session = Depends(get_db)):
             continue
 
         if rtype == "income":
-            # Find active contract for property
             contract = db.query(models.Contract).filter(
                 models.Contract.property_id == prop_id,
                 models.Contract.status == models.ContractStatus.ACTIVE,

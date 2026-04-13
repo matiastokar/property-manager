@@ -30,9 +30,12 @@ error() { echo -e "${RED}[error]${NC} $*"; exit 1; }
 info "Syncing backend source → $TMP_BACKEND"
 mkdir -p "$TMP_BACKEND/routers" "$TMP_BACKEND/agents"
 
-for f in main.py database.py models.py scheduler.py requirements.txt; do
+for f in main.py database.py models.py scheduler.py requirements.txt auth_utils.py; do
   [ -f "$BACKEND_SRC/$f" ] && cp "$BACKEND_SRC/$f" "$TMP_BACKEND/$f"
 done
+
+# Copy .env so agents can find their API keys
+[ -f "$PROJECT_DIR/.env" ] && cp "$PROJECT_DIR/.env" "$TMP_BACKEND/.env"
 
 for f in "$BACKEND_SRC/routers/"*.py; do
   [ -f "$f" ] && cp "$f" "$TMP_BACKEND/routers/"
@@ -53,6 +56,18 @@ if [ -f "$PROJECT_DB" ]; then
   else
     info "Using existing /tmp DB (up to date)"
   fi
+fi
+
+# ── load .env if present ───────────────────────────────────────────────────────
+ENV_FILE="$PROJECT_DIR/.env"
+if [ -f "$ENV_FILE" ]; then
+  info "Loading environment from .env"
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+else
+  warn ".env not found — agents (email/AI) won't work. Copy .env.example → .env and fill in your keys."
 fi
 
 # ── kill any processes already on ports 8000 / 5173 ───────────────────────────

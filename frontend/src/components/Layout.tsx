@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Building2, FileText, Receipt, AlertTriangle,
-  CreditCard, Bot, LogOut, User, CalendarClock, ClipboardCheck, Landmark
+  CreditCard, Bot, LogOut, User, CalendarClock, ClipboardCheck, Landmark, Zap
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -13,6 +13,7 @@ const navItems = [
   { to: '/rents', label: 'Pagos', icon: CreditCard },
   { to: '/expenses', label: 'Gastos', icon: Receipt },
   { to: '/recurring', label: 'Gastos Fijos', icon: CalendarClock },
+  { to: '/utilities', label: 'Suministros', icon: Zap },
   { to: '/bank-import', label: 'Extractos', icon: Landmark },
   { to: '/incidents', label: 'Incidencias', icon: AlertTriangle },
   { to: '/agents', label: 'Agentes AI', icon: Bot },

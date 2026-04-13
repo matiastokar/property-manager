@@ -58,9 +58,10 @@ class Property(Base):
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    contracts = relationship("Contract", back_populates="property", cascade="all, delete")
-    expenses = relationship("Expense", back_populates="property", cascade="all, delete")
-    incidents = relationship("Incident", back_populates="property", cascade="all, delete")
+    contracts        = relationship("Contract",        back_populates="property", cascade="all, delete")
+    expenses         = relationship("Expense",         back_populates="property", cascade="all, delete")
+    incidents        = relationship("Incident",        back_populates="property", cascade="all, delete")
+    utility_readings = relationship("UtilityReading",  back_populates="property", cascade="all, delete")
 
 
 class Contract(Base):
@@ -156,6 +157,27 @@ class RentPayment(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     contract = relationship("Contract", back_populates="rent_payments")
+
+
+class UtilityType(str, PyEnum):
+    ELECTRICITY = "electricity"
+    GAS         = "gas"
+    WATER       = "water"
+
+
+class UtilityReading(Base):
+    __tablename__ = "utility_readings"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    property_id  = Column(Integer, ForeignKey("properties.id"), nullable=False)
+    utility_type = Column(Enum(UtilityType), nullable=False)
+    year         = Column(Integer, nullable=False)
+    month        = Column(Integer, nullable=False)
+    amount       = Column(Float, nullable=False)
+    notes        = Column(String, nullable=True)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+    property = relationship("Property", back_populates="utility_readings")
 
 
 class BankImportStatus(str, PyEnum):

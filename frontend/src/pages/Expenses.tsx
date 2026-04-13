@@ -5,10 +5,12 @@ import Modal from '../components/Modal'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 const FIXED_CATEGORIES = ['mortgage', 'hoa', 'insurance', 'cleaning', 'other']
-const VARIABLE_CATEGORIES = ['incident', 'repair', 'improvement', 'other']
+const VARIABLE_CATEGORIES = ['electricity', 'gas', 'water', 'tax', 'incident', 'repair', 'improvement', 'other']
 const CATEGORY_LABEL: Record<string, string> = {
   mortgage: 'Hipoteca', hoa: 'Comunidad', insurance: 'Seguro', cleaning: 'Limpieza',
-  incident: 'Incidencia', repair: 'Reparación', improvement: 'Mejora', other: 'Otro'
+  electricity: 'Electricidad', gas: 'Gas', water: 'Agua',
+  tax: 'Tributos / Impuestos',
+  incident: 'Incidencia', repair: 'Reparación', improvement: 'Mejora', other: 'Otro',
 }
 
 function ExpenseForm({ initial, properties, incidents, onSave, onCancel }: {

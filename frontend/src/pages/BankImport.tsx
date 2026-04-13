@@ -9,15 +9,52 @@ import { propertiesApi, type Property } from '../api/client'
 const MONTH_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
   'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
-const CATEGORIES = [
+// Categories split by income / fixed-expense / variable-expense
+const INCOME_CATEGORIES = [
+  { value: 'rent',  label: 'Alquiler' },
+  { value: 'other', label: 'Otro' },
+]
+const FIXED_EXPENSE_CATEGORIES = [
   { value: 'mortgage',  label: 'Hipoteca' },
   { value: 'hoa',       label: 'Comunidad' },
   { value: 'insurance', label: 'Seguro' },
   { value: 'cleaning',  label: 'Limpieza' },
   { value: 'internet',  label: 'Internet' },
-  { value: 'rent',      label: 'Alquiler' },
   { value: 'other',     label: 'Otro' },
 ]
+const VARIABLE_EXPENSE_CATEGORIES = [
+  { value: 'electricity', label: 'Electricidad' },
+  { value: 'gas',         label: 'Gas' },
+  { value: 'water',       label: 'Agua' },
+  { value: 'tax',         label: 'Tributos / Impuestos' },
+  { value: 'incident',    label: 'Incidencia' },
+  { value: 'repair',      label: 'Reparación' },
+  { value: 'improvement', label: 'Mejora' },
+  { value: 'other',       label: 'Otro' },
+]
+
+const CATEGORY_LABEL: Record<string, string> = {
+  rent: 'Alquiler',
+  mortgage: 'Hipoteca', hoa: 'Comunidad', insurance: 'Seguro',
+  cleaning: 'Limpieza', internet: 'Internet',
+  electricity: 'Electricidad', gas: 'Gas', water: 'Agua',
+  tax: 'Tributos / Impuestos',
+  incident: 'Incidencia', repair: 'Reparación', improvement: 'Mejora',
+  other: 'Otro',
+}
+
+// Returns the right category list based on the effective type + sub-type
+function categoryOptions(type: string | null, subType?: string | null) {
+  if (type === 'income') return INCOME_CATEGORIES
+  if (type === 'expense') {
+    // If the current category is a fixed one, show fixed list; otherwise variable
+    const fixed = FIXED_EXPENSE_CATEGORIES.map(c => c.value)
+    if (subType && fixed.includes(subType)) return FIXED_EXPENSE_CATEGORIES
+    return VARIABLE_EXPENSE_CATEGORIES   // default for expenses: variable list
+  }
+  // Unknown — show everything
+  return [...INCOME_CATEGORIES, ...FIXED_EXPENSE_CATEGORIES, ...VARIABLE_EXPENSE_CATEGORIES]
+}
 
 interface BankImport {
   id: number
@@ -52,11 +89,15 @@ interface BankRow {
 }
 
 // ── Step 1: Upload ─────────────────────────────────────────────────────────
-function UploadStep({ onUploaded }: { onUploaded: (importId: number) => void }) {
+function UploadStep({ properties, onUploaded }: {
+  properties: Property[]
+  onUploaded: (importId: number) => void
+}) {
   const now = new Date()
   const [month, setMonth] = useState(now.getMonth() + 1)
   const [year, setYear] = useState(now.getFullYear())
   const [currency, setCurrency] = useState('EUR')
+  const [propertyId, setPropertyId] = useState<string>('')   // '' = auto-suggest per row
   const [file, setFile] = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -67,8 +108,8 @@ function UploadStep({ onUploaded }: { onUploaded: (importId: number) => void }) 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault(); setDragging(false)
     const f = e.dataTransfer.files[0]
-    if (f && (f.name.endsWith('.pdf') || f.name.endsWith('.csv'))) setFile(f)
-    else setError('Solo se admiten archivos PDF o CSV')
+    if (f) setFile(f)
+    else setError('Archivo no válido')
   }
 
   const handleUpload = async () => {
@@ -79,6 +120,7 @@ function UploadStep({ onUploaded }: { onUploaded: (importId: number) => void }) 
     form.append('period_month', String(month))
     form.append('period_year', String(year))
     form.append('currency', currency)
+    if (propertyId) form.append('property_id', propertyId)
     try {
       const res = await api.post('/bank-imports/upload', form, {
         headers: { 'Content-Type': 'multipart/form-data' }
@@ -88,6 +130,8 @@ function UploadStep({ onUploaded }: { onUploaded: (importId: number) => void }) 
       setError(e.response?.data?.detail ?? 'Error al procesar el archivo')
     } finally { setLoading(false) }
   }
+
+  const selectedProp = properties.find(p => String(p.id) === propertyId)
 
   return (
     <div className="max-w-xl mx-auto space-y-6">
@@ -118,9 +162,34 @@ function UploadStep({ onUploaded }: { onUploaded: (importId: number) => void }) 
         </div>
       </div>
 
+      {/* Optional property */}
+      <div className="card space-y-3">
+        <div className="flex items-start justify-between">
+          <div>
+            <h2 className="font-semibold text-gray-800">2. Propiedad <span className="text-gray-400 font-normal">(opcional)</span></h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Si el extracto corresponde a una sola propiedad, seleccionala para asignar todos los movimientos automáticamente.
+            </p>
+          </div>
+        </div>
+        <select
+          className="input"
+          value={propertyId}
+          onChange={e => setPropertyId(e.target.value)}
+        >
+          <option value="">— Sugerir propiedad por descripción (automático) —</option>
+          {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        {selectedProp && (
+          <p className="text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-2">
+            Todos los movimientos se asignarán a <strong>{selectedProp.name}</strong>. Podés cambiarlos individualmente en el paso siguiente.
+          </p>
+        )}
+      </div>
+
       {/* Drop zone */}
       <div className="card space-y-4">
-        <h2 className="font-semibold text-gray-800">2. Subí el extracto bancario</h2>
+        <h2 className="font-semibold text-gray-800">3. Subí el extracto bancario</h2>
         <div
           onDragOver={e => { e.preventDefault(); setDragging(true) }}
           onDragLeave={() => setDragging(false)}
@@ -138,10 +207,10 @@ function UploadStep({ onUploaded }: { onUploaded: (importId: number) => void }) 
           ) : (
             <div>
               <p className="text-gray-600 font-medium">Arrastrá el archivo acá o hacé clic</p>
-              <p className="text-sm text-gray-400 mt-1">PDF o CSV · extracto bancario</p>
+              <p className="text-sm text-gray-400 mt-1">PDF, CSV o Excel</p>
             </div>
           )}
-          <input ref={inputRef} type="file" accept=".pdf,.csv" className="hidden"
+          <input ref={inputRef} type="file" accept=".pdf,.csv,.xlsx,.xls" className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f) }} />
         </div>
         {error && <p className="text-sm text-red-500">{error}</p>}
@@ -333,23 +402,54 @@ function ReviewStep({ importId, properties, onDone }: {
                       <select
                         className="text-xs rounded-lg px-2 py-1 border border-gray-200 bg-white"
                         value={row.confirmed_type ?? row.suggested_type ?? ''}
-                        onChange={e => updateRow(row.id, { confirmed_type: e.target.value })}
+                        onChange={e => {
+                          const newType = e.target.value
+                          const defaultCat = newType === 'income' ? 'rent' : 'other'
+                          updateRow(row.id, { confirmed_type: newType, confirmed_category: defaultCat })
+                        }}
                         disabled={imported}
                       >
                         <option value="income">Ingreso</option>
                         <option value="expense">Egreso</option>
                       </select>
                     </td>
-                    {/* Category */}
+                    {/* Category — options depend on the effective type */}
                     <td className="px-4 py-2.5">
-                      <select
-                        className="text-xs rounded-lg px-2 py-1 border border-gray-200 bg-white"
-                        value={row.confirmed_category ?? row.suggested_category ?? ''}
-                        onChange={e => updateRow(row.id, { confirmed_category: e.target.value })}
-                        disabled={imported}
-                      >
-                        {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                      </select>
+                      {(() => {
+                        const effectiveType = row.confirmed_type ?? row.suggested_type ?? null
+                        const effectiveCat  = row.confirmed_category ?? row.suggested_category ?? null
+                        const options = categoryOptions(effectiveType, effectiveCat)
+                        // If current category is not in the list, pick first option
+                        const value = options.find(o => o.value === effectiveCat)
+                          ? effectiveCat
+                          : options[0]?.value ?? ''
+                        return (
+                          <select
+                            className="text-xs rounded-lg px-2 py-1 border border-gray-200 bg-white min-w-[120px]"
+                            value={value ?? ''}
+                            onChange={e => updateRow(row.id, { confirmed_category: e.target.value })}
+                            disabled={imported}
+                          >
+                            {/* Group fixed vs variable for expenses */}
+                            {effectiveType === 'expense' ? (
+                              <>
+                                <optgroup label="Variables">
+                                  {VARIABLE_EXPENSE_CATEGORIES.map(c =>
+                                    <option key={c.value} value={c.value}>{c.label}</option>
+                                  )}
+                                </optgroup>
+                                <optgroup label="Fijos">
+                                  {FIXED_EXPENSE_CATEGORIES.map(c =>
+                                    <option key={c.value} value={c.value}>{c.label}</option>
+                                  )}
+                                </optgroup>
+                              </>
+                            ) : (
+                              options.map(c => <option key={c.value} value={c.value}>{c.label}</option>)
+                            )}
+                          </select>
+                        )
+                      })()}
                     </td>
                   </tr>
                 )
@@ -500,7 +600,7 @@ export default function BankImportPage() {
       ) : view === 'history' ? (
         <HistoryList imports={imports} onSelect={handleSelect} onDelete={handleDelete} />
       ) : view === 'upload' ? (
-        <UploadStep onUploaded={handleUploaded} />
+        <UploadStep properties={properties} onUploaded={handleUploaded} />
       ) : activeImportId ? (
         <ReviewStep
           importId={activeImportId}

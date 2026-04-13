@@ -10,6 +10,7 @@ import Agents from './pages/Agents'
 import Recurring from './pages/Recurring'
 import PaymentStatus from './pages/PaymentStatus'
 import BankImport from './pages/BankImport'
+import Utilities from './pages/Utilities'
 import Login from './pages/Login'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/recurring" element={<Recurring />} />
           <Route path="/payment-status" element={<PaymentStatus />} />
           <Route path="/bank-import" element={<BankImport />} />
+          <Route path="/utilities" element={<Utilities />} />
         </Route>
       </Routes>
     </BrowserRouter>
